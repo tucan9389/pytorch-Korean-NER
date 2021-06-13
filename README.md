@@ -1,5 +1,14 @@
 # pytorch-NER
 
+## TODO
+
+- [x] 한국어
+  - [x] KLUE-NER
+  - [x] KMOU-NER
+  - [x] NAVER-NER
+- [ ] 일본어
+- 그 외 언어
+
 ## Train
 
 ### git clone
