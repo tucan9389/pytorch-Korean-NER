@@ -18,6 +18,8 @@ from transformers import (
 import numpy as np
 from seqeval.metrics import precision_score, recall_score, f1_score, classification_report
 
+from torch.utils.tensorboard import SummaryWriter
+
 from datasets.dataset_provider import get_dataset
 from models.model_provider import get_model
 
@@ -135,7 +137,19 @@ if __name__ == '__main__':
     warmup_steps    = 0
     max_grad_norm   = 1.0
 
-    echo_num        = int(args.echo_num)
+    echo_num        = args.echo_num
+
+    # tensorboard
+    log_dir = "logs"
+    exp_log_dir = os.path.join(log_dir, f"{dataset_name}-{model_name}-lr{learning_rate}-ae{adam_epsilon}-bs{batch_size}-ep{total_epoch_num}")
+    os.makedirs(exp_log_dir, exist_ok=True)
+    writer = SummaryWriter(exp_log_dir)
+    
+    from tensorboard import program
+    tb = program.TensorBoard()
+    tb.configure(argv=[None, '--logdir', log_dir])
+    url = tb.launch()
+    print(f"Open Tensorboard at {log_dir}:", url)
 
     # get model
     ModelConfig, \
@@ -249,6 +263,17 @@ if __name__ == '__main__':
         best_f1score_e = max(best_f1score_e, f1score_e)
         best_f1score_c = max(best_f1score_c, f1score_c)
 
+        writer.add_scalar('train/loss', loss, epoch)
+        writer.add_scalar('valid/precision/entity', precision_e, epoch)
+        writer.add_scalar('valid/recall/entity', recall_e, epoch)
+        writer.add_scalar('valid/f1-score/entity', f1score_e, epoch)
+        writer.add_scalar('valid/precision/char', precision_c, epoch)
+        writer.add_scalar('valid/recall/char', recall_c, epoch)
+        writer.add_scalar('valid/f1-score/char', f1score_c, epoch)
+
         print(f"[epoch:{epoch+1}/{total_epoch_num}] entity train-loss:{loss:.3f}, valid-precision:{precision_e:.3f}, valid-recall:{recall_e:.3f}, valid-f1score:{f1score_e:.3f}, best-valid-f1score:{best_f1score_e:.3f}")
         print(f"[epoch:{epoch+1}/{total_epoch_num}] char   train-loss:{loss:.3f}, valid-precision:{precision_c:.3f}, valid-recall:{recall_c:.3f}, valid-f1score:{f1score_c:.3f}, best-valid-f1score:{best_f1score_c:.3f}")
         print()
+    
+    writer.add_scalar('valid/f1-score/entity-best', best_f1score_e, 0)
+    writer.add_scalar('valid/f1-score/char-best', best_f1score_c, 0)
