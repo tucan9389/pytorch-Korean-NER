@@ -107,6 +107,7 @@ if __name__ == '__main__':
 
     my_parser = argparse.ArgumentParser()
     my_parser.add_argument('--dataset', default='KLUE', choices=["KLUE", "KMOU", "NAVER"])
+    my_parser.add_argument('--dataset_root_path', required=True)
     my_parser.add_argument('--model_name', default='koelectra', choices=["koelectra-v3", "koelectra", "kcbert"])
     my_parser.add_argument('--max_seq_len', default=50, type=int)
     my_parser.add_argument('--epoch', default=300, type=int)
@@ -119,6 +120,7 @@ if __name__ == '__main__':
 
     # dataset config
     dataset_name    = args.dataset
+    dataset_root_path = args.dataset_root_path
 
     # model config
     model_name      = args.model_name
@@ -149,7 +151,8 @@ if __name__ == '__main__':
     print(tokenizer.tokenize("한반도의 운명은"))  # ['한반도의', '운명', '##은'], "<한반도:LOC>의운명은"
 
     # get dataset
-    dataset_train, dataset_valid = get_dataset(dataset_name, tokenizer, max_seq_len)
+    os.makedirs(dataset_root_path, exist_ok=True)
+    dataset_train, dataset_valid = get_dataset(dataset_name, dataset_root_path, tokenizer, max_seq_len)
     dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, drop_last=True) # , collate_fn=??)
     dataloader_valid = DataLoader(dataset_valid, batch_size=batch_size, shuffle=False, drop_last=False)
 
