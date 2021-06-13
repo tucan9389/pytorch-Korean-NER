@@ -11,7 +11,7 @@ def get_dataset(dataset_name, dataset_root_path, tokenizer, max_seq_len=50):
             os.system(f"git clone https://github.com/KLUE-benchmark/KLUE {dataset_path}")
 
         dataset_path_train = os.path.join(dataset_root_path, "KLUE/klue_benchmark/klue-ner-v1/klue-ner-v1_train.tsv")
-        dataset_path_dev = os.path.join(dataset_root_path, "KLUE/klue_benchmark/klue-ner-v1/klue-ner-v1_dev.tsv"
+        dataset_path_dev = os.path.join(dataset_root_path, "KLUE/klue_benchmark/klue-ner-v1/klue-ner-v1_dev.tsv")
         sentences = open(dataset_path_train, 'r').read().split("\n## ")
         del sentences[:5]
     elif dataset_name == "KMOU":
@@ -19,15 +19,15 @@ def get_dataset(dataset_name, dataset_root_path, tokenizer, max_seq_len=50):
         if not os.path.exists(os.path.join(dataset_root_path, "pytorch-bert-crf-ner")):
             os.system(f"git clone https://github.com/eagle705/pytorch-bert-crf-ner {dataset_path}")
 
-        dataset_path_train  = os.path.join(dataset_root_path, "pytorch-bert-crf-ner/data_in/NER-master/말뭉치 - 형태소_개체명"
-        dataset_path_dev  = os.path.join(dataset_root_path, "pytorch-bert-crf-ner/data_in/NER-master/validation_set"
+        dataset_path_train  = os.path.join(dataset_root_path, "pytorch-bert-crf-ner/data_in/NER-master/말뭉치 - 형태소_개체명")
+        dataset_path_dev  = os.path.join(dataset_root_path, "pytorch-bert-crf-ner/data_in/NER-master/validation_set")
     elif dataset_name == "NAVER":
         dataset_path = os.path.join(dataset_root_path, "KcBERT-Finetune")
         if not os.path.exists(os.path.join(dataset_root_path, "KcBERT-Finetune")):
             os.system(f"git clone https://github.com/Beomi/KcBERT-Finetune {dataset_path}")
 
-        dataset_path_train  = os.path.join(dataset_root_path, "KcBERT-Finetune/data/naver-ner/train.tsv"
-        dataset_path_dev  = os.path.join(dataset_root_path, "KcBERT-Finetune/data/naver-ner/test.tsv"
+        dataset_path_train  = os.path.join(dataset_root_path, "KcBERT-Finetune/data/naver-ner/train.tsv")
+        dataset_path_dev  = os.path.join(dataset_root_path, "KcBERT-Finetune/data/naver-ner/test.tsv")
 
     if dataset_name == "KLUE":
         Processor = KLUENERPreprocessor
