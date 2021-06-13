@@ -41,7 +41,7 @@ cd pytorch-NER
 pip install -r requirements.txt
 ```
 
-### train!
+### python train.py
 
 ```shell
 python train.py --gpu_device 0 1
