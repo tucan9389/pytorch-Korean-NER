@@ -1,12 +1,11 @@
 import os, re
+import argparse
 
 import torch
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from tqdm import tqdm
-
 from fastprogress.fastprogress import master_bar, progress_bar
-
 from transformers import (
     AdamW,
     get_linear_schedule_with_warmup
@@ -17,13 +16,9 @@ from transformers import (
     AutoConfig, AutoTokenizer, AutoModelForTokenClassification, 
 )
 import numpy as np
-
 from seqeval.metrics import precision_score, recall_score, f1_score, classification_report
 
-from datasets.ner_naver_preprocessor import NAVERNERPreprocessor
-from datasets.ner_klue_preprocessor import KLUENERPreprocessor
-from datasets.ner_kmou_preprocessor import KMOUNERPreprocessor
-from datasets.ner_dataset import NERDataset
+from datasets.dataset_provider import get_dataset
 from models.model_provider import get_model
 
 def evaluate(dataloader_valid, model, device, tokenizer, id2label, echo_num=40):
@@ -110,52 +105,55 @@ def evaluate(dataloader_valid, model, device, tokenizer, id2label, echo_num=40):
 
 if __name__ == '__main__':
 
+    my_parser = argparse.ArgumentParser()
+    my_parser.add_argument('--dataset', default='KLUE', choices=["KLUE", "KMOU", "NAVER"])
+    my_parser.add_argument('--model_name', default='koelectra', choices=["koelectra-v3", "koelectra", "kcbert"])
+    my_parser.add_argument('--max_seq_len', default=50, type=int)
+    my_parser.add_argument('--epoch', default=300, type=int)
+    my_parser.add_argument('--bs', default=128, type=int)
+    my_parser.add_argument('--lr', default=1e-3, type=float)
+    my_parser.add_argument('--ae', default=1e-8, type=float)
+    my_parser.add_argument('--echo_num', default=5, type=int)
+
+    args = my_parser.parse_args()
+
     # dataset config
-    dataset_name = "KLUE"  # "KMOU", "KLUE", "NAVER"
+    dataset_name    = args.dataset
 
     # model config
-    model_name = "monologg/koelectra-base-v3-discriminator"
-    max_seq_len = 50
+    model_name      = args.model_name
+    max_seq_len     = args.max_seq_len
 
     # training config
-    batch_size = 64 
-    total_epoch_num = 300
+    batch_size      = args.bs
+    total_epoch_num = args.epoch
     weight_decay    = 0.0
-    learning_rate   = 1e-3  # 8e-5  # 3e-4
-    adam_epsilon    = 1e-8
+    learning_rate   = args.lr  # 8e-5  # 3e-4
+    adam_epsilon    = args.ae
     warmup_steps    = 0
     max_grad_norm   = 1.0
 
-    if dataset_name == "KLUE":
-        dataset_path_train = "/home/mldongseok/datasets/nlp//KLUE/klue_benchmark/klue-ner-v1/klue-ner-v1_train.tsv"
-        dataset_path_dev = "/home/mldongseok/datasets/nlp/KLUE/klue_benchmark/klue-ner-v1/klue-ner-v1_dev.tsv"
-        sentences = open(dataset_path_train, 'r').read().split("\n## ")
-        del sentences[:5]
-    elif dataset_name == "KMOU":
-        dataset_path_train  = "/home/mldongseok/datasets/nlp/pytorch-bert-crf-ner/data_in/NER-master/말뭉치 - 형태소_개체명"
-        dataset_path_dev  = "/home/mldongseok/datasets/nlp/pytorch-bert-crf-ner/data_in/NER-master/validation_set"
-    elif dataset_name == "NAVER":
-        dataset_path_train  = "/home/mldongseok/datasets/nlp/KcBERT-Finetune/data/naver-ner/train.tsv"
-        dataset_path_dev  = "/home/mldongseok/datasets/nlp/KcBERT-Finetune/data/naver-ner/test.tsv"
+    echo_num        = int(args.echo_num)
 
-    if dataset_name == "KLUE":
-        Processor = KLUENERPreprocessor
-    elif dataset_name == "KMOU":
-        Processor = KMOUNERPreprocessor
-    elif dataset_name == "NAVER":
-        Processor = NAVERNERPreprocessor
-    else:
-        Processor = None
-        assert False, f"{dataset_name} ner dataset is not supported"
-
+    # get model
     ModelConfig, \
     Tokenizer, \
-    Model = get_model(model_name=model_name)
+    Model, \
+    pretraine_name = get_model(model_name=model_name)
 
-    tokenizer = Tokenizer.from_pretrained(model_name, do_lower_case=False)
+    # get tokenizer
+    tokenizer = Tokenizer.from_pretrained(pretraine_name, do_lower_case=False)
 
-    dataset_train = NERDataset(dataset_path_train, tokenizer=tokenizer, max_seq_len=max_seq_len, Preprocessor=Processor)
-    dataset_valid = NERDataset(dataset_path_dev , tokenizer=tokenizer, max_seq_len=max_seq_len, labels=dataset_train.labels, Preprocessor=Processor)
+    print(tokenizer.tokenize("안녕하세요 저는 곽도영입니다.👍"))  # ['안녕', '##하세요', '저는', '곽', '##도', '##영', '##입니다', '.', '👍']
+    print(tokenizer.tokenize("이미 수상자(2000년 김대중 전 대통령)를 배출한 데다"))  # ['이미', '수상', '##자', '(', '2000', '##년', '김대중', '전', '대통령', ')', '를', '배출', '##한', '데', '##다']
+    print(tokenizer.tokenize("한반도의 운명은"))  # ['한반도의', '운명', '##은'], "<한반도:LOC>의운명은"
+
+    # get dataset
+    dataset_train, dataset_valid = get_dataset(dataset_name, tokenizer, max_seq_len)
+    dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, drop_last=True) # , collate_fn=??)
+    dataloader_valid = DataLoader(dataset_valid, batch_size=batch_size, shuffle=False, drop_last=False)
+
+    t_total = len(dataloader_train) // total_epoch_num
 
     labels    = dataset_train.labels
     id2label  = {i: label for i, label in enumerate(labels)}
@@ -166,22 +164,12 @@ if __name__ == '__main__':
     print("label2id:", label2id)
     print()
 
-    config    = ModelConfig.from_pretrained(model_name, num_labels=len(labels), id2label=id2label, label2id=label2id)
-    model     = Model.from_pretrained(model_name, config=config)
-
-    print(tokenizer.tokenize("안녕하세요 저는 곽도영입니다.👍"))  # ['안녕', '##하세요', '저는', '곽', '##도', '##영', '##입니다', '.', '👍']
-    print(tokenizer.tokenize("이미 수상자(2000년 김대중 전 대통령)를 배출한 데다"))  # ['이미', '수상', '##자', '(', '2000', '##년', '김대중', '전', '대통령', ')', '를', '배출', '##한', '데', '##다']
-
-    print(tokenizer.tokenize("한반도의 운명은"))  # ['한반도의', '운명', '##은'], "<한반도:LOC>의운명은"
+    config    = ModelConfig.from_pretrained(pretraine_name, num_labels=len(labels), id2label=id2label, label2id=label2id)
+    model     = Model.from_pretrained(pretraine_name, config=config)
 
     # GPU or CPU
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
-
-    dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, drop_last=True) # , collate_fn=??)
-    dataloader_valid = DataLoader(dataset_valid, batch_size=batch_size, shuffle=False, drop_last=False)
-
-    t_total = len(dataloader_train) // total_epoch_num
 
     # Prepare optimizer and schedule (linear warmup and decay)
     # no_decay = ['bias', 'LayerNorm.weight']
@@ -217,7 +205,6 @@ if __name__ == '__main__':
         # epoch_iterator = progress_bar(dataloader_train, parent=mb)
 
         # train one epoch
-        echo_num=40
         total_step_per_epoch = len(dataloader_train)
         total_loss = 0.0
         echo_loss = 0.0

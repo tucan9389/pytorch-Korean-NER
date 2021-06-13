@@ -4,20 +4,27 @@ from transformers import (
     AutoConfig, AutoTokenizer, AutoModelForTokenClassification, 
 )
 
-def get_model(model_name="beomi/kcbert-base"):
+def get_model(model_name="koelectra-v3"):
     ModelConfig = None
     Tokenizer = None
     Model = None
-    if model_name == "beomi/kcbert-base":
+    pretraine_name = None
+    if model_name == "kcbert":
         ModelConfig = BertConfig
         Tokenizer   = BertTokenizer
         Model       = BertForTokenClassification
-    elif model_name == "monologg/koelectra-base-discriminator" or model_name == "monologg/koelectra-base-v3-discriminator":
+        pretraine_name = "beomi/kcbert-base"
+    elif model_name == "koelectra-v3" or model_name == "koelectra":
         ModelConfig = ElectraConfig
         Tokenizer   = ElectraTokenizer
         Model       = ElectraForTokenClassification
-    elif model_name == "monologg/kobert":
+        if model_name == "koelectra-v3":
+            pretraine_name = "monologg/koelectra-base-v3-discriminator"
+        elif model_name == "koelectra":
+            pretraine_name = "monologg/koelectra-base-discriminator"
+    elif model_name == "kobert":
         ModelConfig = AutoConfig
         Tokenizer   = AutoTokenizer
         Model       = AutoModelForTokenClassification
-    return ModelConfig, Tokenizer, Model
+        pretraine_name = "monologg/kobert"
+    return ModelConfig, Tokenizer, Model, pretraine_name
