@@ -502,7 +502,7 @@ def evaluate(dataloader_valid, model, device, tokenizer, id2label, echo_num=40):
             pred_label = id2label[pred_label_id]
             pred_token_label_list[i].append(pred_label)
 
-            token = tokens[i]
+            token = tokens[j]
             token = token.replace("##", "")
             if token[0] == '[' and token[-1] == ']':
                 gt_char_label_list[i].append(gt_label)
