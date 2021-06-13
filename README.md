@@ -25,3 +25,36 @@ model | entity<br>f1 score | char<br>f1 score | colab
 koelectra-base-v3 | **0.877** |  | [link](https://colab.research.google.com/drive/1LuiGHDkJnpWyOkN7FUqzCNXWi9fpYvH8?usp=sharing)
 koelectra-base | 0.876 |  | [link](https://colab.research.google.com/drive/1wL5al6DPTbP3IceX1I993v-1G3Q8kJwE?usp=sharing)
 kcbert-base | 0.863 |  | [link](https://colab.research.google.com/drive/19B4HneG4BUJK_Nac6PAt6SfLB4Q-tzXs?usp=sharing)
+
+## Train
+
+### git clone
+
+```shell
+git clone https://github.com/tucan9389/pytorch-NER
+cd pytorch-NER
+```
+
+### pip install
+
+```shell
+pip install -r requirements.txt
+```
+
+### train!
+
+```shell
+python train.py --gpu_device 0 1
+# or
+python train.py \
+    --gpu_device 0 1 \
+    --dataset_root_path /home/centos/datasets \
+    --dataset "KLUE" \
+    --model_name "koelectra-v3" \
+    --epoch 300 \
+    --bs 64
+```
+
+## Inference
+
+> preparing...
