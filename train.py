@@ -1,10 +1,15 @@
 import os, re
 import argparse
 
+from tqdm import tqdm
+
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel
+
 import torch
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
-from tqdm import tqdm
 from fastprogress.fastprogress import master_bar, progress_bar
 from transformers import (
     AdamW,
@@ -104,21 +109,23 @@ def evaluate(dataloader_valid, model, device, tokenizer, id2label, echo_num=40):
     f1_score(gt_char_label_list, pred_char_label_list)
     # results.update(result)
 
+def main(gpu, ngpus_per_node, args):
+    print("gpu:", gpu)
+    print("ngpus_per_node:", ngpus_per_node)
+    print("args:", args)
 
-if __name__ == '__main__':
+    args.gpu = gpu
+    ngpus_per_node = torch.cuda.device_count()    
+    print("Use GPU: {} for training".format(args.gpu))
+        
+    args.rank = args.rank * ngpus_per_node + gpu    
+    dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
+                            world_size=args.world_size, rank=args.rank)
 
-    my_parser = argparse.ArgumentParser()
-    my_parser.add_argument('--dataset', default='KLUE', choices=["KLUE", "KMOU", "NAVER"])
-    my_parser.add_argument('--dataset_root_path', required=True)
-    my_parser.add_argument('--model_name', default='koelectra', choices=["koelectra-v3", "koelectra", "kcbert"])
-    my_parser.add_argument('--max_seq_len', default=50, type=int)
-    my_parser.add_argument('--epoch', default=300, type=int)
-    my_parser.add_argument('--bs', default=128, type=int)
-    my_parser.add_argument('--lr', default=1e-3, type=float)
-    my_parser.add_argument('--ae', default=1e-8, type=float)
-    my_parser.add_argument('--echo_num', default=5, type=int)
+    torch.cuda.set_device(args.gpu)
 
-    args = my_parser.parse_args()
+    args.bs = int(args.bs / ngpus_per_node)
+    args.num_workers = int(args.num_workers / ngpus_per_node)
 
     # dataset config
     dataset_name    = args.dataset
@@ -139,17 +146,19 @@ if __name__ == '__main__':
 
     echo_num        = args.echo_num
 
-    # tensorboard
-    log_dir = "logs"
-    exp_log_dir = os.path.join(log_dir, f"{dataset_name}-{model_name}-lr{learning_rate}-ae{adam_epsilon}-bs{batch_size}-ep{total_epoch_num}")
-    os.makedirs(exp_log_dir, exist_ok=True)
-    writer = SummaryWriter(exp_log_dir)
+    writer = None
+    if args.rank == 0:
+        # tensorboard
+        log_dir = "logs"
+        exp_log_dir = os.path.join(log_dir, f"{dataset_name}-{model_name}-lr{learning_rate}-ae{adam_epsilon}-bs{batch_size}-ep{total_epoch_num}")
+        os.makedirs(exp_log_dir, exist_ok=True)
+        writer = SummaryWriter(exp_log_dir)
     
-    from tensorboard import program
-    tb = program.TensorBoard()
-    tb.configure(argv=[None, '--logdir', log_dir])
-    url = tb.launch()
-    print(f"Open Tensorboard at {log_dir}:", url)
+        from tensorboard import program
+        tb = program.TensorBoard()
+        tb.configure(argv=[None, '--logdir', log_dir])
+        url = tb.launch()
+        print(f"Open Tensorboard at {log_dir}:", url)
 
     # get model
     ModelConfig, \
@@ -167,7 +176,10 @@ if __name__ == '__main__':
     # get dataset
     os.makedirs(dataset_root_path, exist_ok=True)
     dataset_train, dataset_valid = get_dataset(dataset_name, dataset_root_path, tokenizer, max_seq_len)
-    dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, drop_last=True) # , collate_fn=??)
+    train_sampler = torch.utils.data.distributed.DistributedSampler(dataset_train)
+    dataloader_train = DataLoader(dataset_train, batch_size=args.bs, 
+                                  shuffle=(train_sampler is None), num_workers=args.num_workers, 
+                                  sampler=train_sampler, drop_last=True)
     dataloader_valid = DataLoader(dataset_valid, batch_size=batch_size, shuffle=False, drop_last=False)
 
     t_total = len(dataloader_train) // total_epoch_num
@@ -185,8 +197,11 @@ if __name__ == '__main__':
     model     = Model.from_pretrained(pretraine_name, config=config)
 
     # GPU or CPU
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = model.to(device)
+    model.cuda(args.gpu)
+    model_dp = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+    device = args.gpu
+    # device = "cuda" if torch.cuda.is_available() else "cpu"
+    # model = model.to(device)
 
     # Prepare optimizer and schedule (linear warmup and decay)
     # no_decay = ['bias', 'LayerNorm.weight']
@@ -227,53 +242,98 @@ if __name__ == '__main__':
         echo_loss = 0.0
 
         model.train()
-        for step, batch in enumerate(dataloader_train):
-            model.zero_grad()
+        with tqdm(dataloader_train, unit="batch") as tepoch:
+            for batch in tepoch:
+                tepoch.set_description(f"Epoch {epoch}")
 
-            batch = tuple(t.to(device) for t in batch)
-            inputs = {
-                "input_ids": batch[0],
-                "attention_mask": batch[1],
-                "labels": batch[2]
-            }
+                model.zero_grad()
+
+                batch = tuple(t.to(device) for t in batch)
+                inputs = {
+                    "input_ids": batch[0],
+                    "attention_mask": batch[1],
+                    "labels": batch[2]
+                }
+                
+                outputs = model_dp(**inputs)
+
+                loss = outputs[0]
+                loss.backward()
+
+                torch.nn.utils.clip_grad_norm_(model_dp.parameters(), max_grad_norm)
+
+                optimizer.step()
+                # scheduler.step()
+                # model.zero_grad()
+
+                total_loss += loss.mean().item()
+                echo_loss += loss.mean().item()
+
+                tepoch.set_postfix(loss=loss.mean().item())
+                
+
+        if args.rank == 0:
+            loss = total_loss / total_step_per_epoch
             
-            outputs = model(**inputs)
+            
+            precision_e, recall_e, f1score_e, \
+            precision_c, recall_c, f1score_c = evaluate(dataloader_valid, model_dp, device, tokenizer, id2label)
+            best_f1score_e = max(best_f1score_e, f1score_e)
+            best_f1score_c = max(best_f1score_c, f1score_c)
 
-            loss = outputs[0]
-            loss.backward()
+            writer.add_scalar('train/loss', loss, epoch)
+            writer.add_scalar('valid/entity/precision', precision_e, epoch)
+            writer.add_scalar('valid/entity/recall', recall_e, epoch)
+            writer.add_scalar('valid/entity/f1-score', f1score_e, epoch)
+            writer.add_scalar('valid/char/precision', precision_c, epoch)
+            writer.add_scalar('valid/char/recall', recall_c, epoch)
+            writer.add_scalar('valid/char/f1-score', f1score_c, epoch)
 
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-
-            optimizer.step()
-            # scheduler.step()
-            # model.zero_grad()
-
-            total_loss += loss.mean().item()
-            echo_loss += loss.mean().item()
-
-            if (step+1) % echo_num == 0:
-                print(f" >> [epoch:{epoch+1}/{total_epoch_num}][step:{step+1}/{total_step_per_epoch}] train-loss:{echo_loss/float(echo_num):.3f}")
-                echo_loss = 0.0
-
-        loss = total_loss / total_step_per_epoch
-        
-        
-        precision_e, recall_e, f1score_e, \
-        precision_c, recall_c, f1score_c = evaluate(dataloader_valid, model, device, tokenizer, id2label)
-        best_f1score_e = max(best_f1score_e, f1score_e)
-        best_f1score_c = max(best_f1score_c, f1score_c)
-
-        writer.add_scalar('train/loss', loss, epoch)
-        writer.add_scalar('valid/precision/entity', precision_e, epoch)
-        writer.add_scalar('valid/recall/entity', recall_e, epoch)
-        writer.add_scalar('valid/f1-score/entity', f1score_e, epoch)
-        writer.add_scalar('valid/precision/char', precision_c, epoch)
-        writer.add_scalar('valid/recall/char', recall_c, epoch)
-        writer.add_scalar('valid/f1-score/char', f1score_c, epoch)
-
-        print(f"[epoch:{epoch+1}/{total_epoch_num}] entity train-loss:{loss:.3f}, valid-precision:{precision_e:.3f}, valid-recall:{recall_e:.3f}, valid-f1score:{f1score_e:.3f}, best-valid-f1score:{best_f1score_e:.3f}")
-        print(f"[epoch:{epoch+1}/{total_epoch_num}] char   train-loss:{loss:.3f}, valid-precision:{precision_c:.3f}, valid-recall:{recall_c:.3f}, valid-f1score:{f1score_c:.3f}, best-valid-f1score:{best_f1score_c:.3f}")
-        print()
+            print(f"[epoch:{epoch+1}/{total_epoch_num}] entity train-loss:{loss:.3f}, valid-precision:{precision_e:.3f}, valid-recall:{recall_e:.3f}, valid-f1score:{f1score_e:.3f}, best-valid-f1score:{best_f1score_e:.3f}")
+            print(f"[epoch:{epoch+1}/{total_epoch_num}] char   train-loss:{loss:.3f}, valid-precision:{precision_c:.3f}, valid-recall:{recall_c:.3f}, valid-f1score:{f1score_c:.3f}, best-valid-f1score:{best_f1score_c:.3f}")
+            print()
+        if args.distributed:
+            dist.barrier()
     
-    writer.add_scalar('valid/f1-score/entity-best', best_f1score_e, 0)
-    writer.add_scalar('valid/f1-score/char-best', best_f1score_c, 0)
+    if args.rank == 0:
+        writer.add_scalar('valid/f1-score/entity-best', best_f1score_e, 0)
+        writer.add_scalar('valid/f1-score/char-best', best_f1score_c, 0)
+
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--local_rank', default=0, type=int)
+    parser.add_argument('--resume', default=None, help='')
+    parser.add_argument('--num_workers', type=int, default=4, help='')
+    parser.add_argument("--gpu_devices", type=int, nargs='+', default=None, help="")
+    parser.add_argument('--gpu', default=None, type=int, help='GPU id to use.')
+    parser.add_argument('--dist-url', default='tcp://127.0.0.1:3456', type=str, help='')
+    parser.add_argument('--dist-backend', default='nccl', type=str, help='')
+    parser.add_argument('--rank', default=0, type=int, help='')
+    parser.add_argument('--world_size', default=1, type=int, help='')
+    parser.add_argument('--distributed', action='store_true', help='')
+
+    parser.add_argument('--dataset', default='KLUE', choices=["KLUE", "KMOU", "NAVER"])
+    parser.add_argument('--dataset_root_path', required=True)
+    parser.add_argument('--model_name', default='koelectra', choices=["koelectra-v3", "koelectra", "kcbert"])
+    parser.add_argument('--max_seq_len', default=50, type=int)
+    parser.add_argument('--epoch', default=300, type=int)
+    parser.add_argument('--bs', default=128, type=int)
+    parser.add_argument('--lr', default=1e-3, type=float)
+    parser.add_argument('--ae', default=1e-8, type=float)
+    parser.add_argument('--echo_num', default=5, type=int)
+
+    args = parser.parse_args()
+
+    torch.cuda.empty_cache()
+
+    gpu_devices = ','.join([str(id) for id in args.gpu_devices])
+    os.environ["CUDA_VISIBLE_DEVICES"] = gpu_devices
+
+    # distributed env
+    ngpus_per_node = torch.cuda.device_count()
+    args.world_size = ngpus_per_node * args.world_size
+
+    print("ngpus_per_node:", ngpus_per_node)
+
+    mp.spawn(main, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
