@@ -7,7 +7,7 @@
   - [x] KMOU-NER
   - [x] NAVER-NER
 - [ ] 일본어
-- 그 외 언어
+- [ ] 그 외 언어
 
 ## Train
 
