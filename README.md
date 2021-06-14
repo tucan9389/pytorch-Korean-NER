@@ -64,9 +64,9 @@ kcbert-base | 0.871 |
 
 model | entity<br>f1 score | char<br>f1 score
 -- | :--: | :--:
-koelectra-base-v3 | **0.877** |
-koelectra-base | 0.876 |
-kcbert-base | 0.863 |
+koelectra-base-v3 |  |
+koelectra-base | 0.885 | 0.885
+kcbert-base | 0.885 | 0.874
 
 ## Reference
 
