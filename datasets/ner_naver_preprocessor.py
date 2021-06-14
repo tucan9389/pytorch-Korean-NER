@@ -21,17 +21,10 @@ class NAVERNERPreprocessor(NERPreprocessor):
             texts, tags = sentence.split("\t")
             texts_len = len(texts)
             for idx, (text, tag) in enumerate(zip(texts.split(" "), tags.split(" "))):
-                text_len = len(text)
-                for i in range(text_len):
-                    c = text[i]
-                    t = tag if len(tag.split('-')) == 1 else tag.split('-')[0]
-                    splited_texts.append(c)
-                    splited_tags.append(t)
-
-                if idx + 1 != texts_len:
-                    splited_texts.append(' ')
-                    splited_tags.append('O')
-
+                c = text
+                t = tag if len(tag.split('-')) == 1 else tag.split('-')[0]
+                splited_texts.append(c)
+                splited_tags.append(t)
             
             for label in splited_tags:
                 if label == 'O':
