@@ -1,4 +1,4 @@
-# pytorch-NER
+# pytorch Korean NER
 
 ## TODO
 
